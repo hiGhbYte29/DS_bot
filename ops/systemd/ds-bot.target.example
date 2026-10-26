@@ -1,0 +1,8 @@
+# AI-assisted example. Controls only the DSH and bridge services.
+[Unit]
+Description=DeepSeek QQ bot services
+Wants=ds-bot-dsh.service ds-bot-bridge.service
+After=ds-bot-dsh.service ds-bot-bridge.service
+
+[Install]
+WantedBy=default.target

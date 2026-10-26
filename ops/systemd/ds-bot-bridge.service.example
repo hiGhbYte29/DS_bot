@@ -1,0 +1,24 @@
+# AI-assisted example. SnowLuma must be started independently by the user.
+[Unit]
+Description=QQ to DeepSeek bridge
+PartOf=ds-bot.target
+Wants=ds-bot-dsh.service
+After=ds-bot-dsh.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Project/DS_bot/qq-bridge
+Environment="PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="DSH_HOME=%h/.dsh"
+Environment="LANG=C.UTF-8"
+ExecStart=%h/.local/bin/node %h/Project/DS_bot/qq-bridge/src/bridge.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=25
+KillMode=control-group
+UMask=0077
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal

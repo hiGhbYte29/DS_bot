@@ -1,0 +1,97 @@
+# Dependencies and generated output
+node_modules/
+.npm-cache/
+__pycache__/
+*.py[cod]
+coverage/
+dist/
+.cache/
+
+# Credentials and real deployment configuration
+.env
+.env.*
+!.env.example
+config.json
+*.local.json
+*.local.yaml
+*.local.yml
+*credentials*.yaml
+*credentials*.yml
+*credentials*.json
+*onebot*.json
+console-token
+cookies.json
+cookies.txt
+*.pem
+*.key
+*.p12
+*.pfx
+.dsh/
+.ssh/
+
+# Account data, conversations, media and runtime state
+state/
+data/
+runtime/
+qq-config/
+qq-data/
+audio/
+logs/
+*.log
+*.log.*
+*.jsonl
+*.jsonl.zstd
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.lock.pid
+
+# Private backups, exports and deployment notes
+backups/
+exports/
+*.bak
+*.bak-*
+*.backup
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+/TODO.md
+/RUNBOOK.md
+/ACCESS.txt
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/scripts/*private*.json
+/scripts/publication-audit.local.*
+
+# SnowLuma is obtained separately; publish documentation only
+/snowluma/*
+!/snowluma/README.md
+_snowluma-catalog.json
+
+# Publish portable operations files, never machine-specific service definitions
+/ops/*
+!/ops/README.md
+!/ops/status.mjs
+!/ops/maintenance.py
+!/ops/systemd/
+/ops/systemd/*
+!/ops/systemd/*.example
+
+# User-authored/current bot persona files stay local
+/qq-bridge/roles/*
+!/qq-bridge/roles/README.md
+!/qq-bridge/roles/*.example.md
+
+# Editor and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
