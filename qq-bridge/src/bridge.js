@@ -3046,6 +3046,7 @@ async function main() {
     goodCheckedAt: 0,
     degraded: false,      // 当前是否处于"已告警"状态（边沿触发，避免刷屏）
     reason: '',
+    lastHealthTickAt: 0,  // 上一次健康评估的时间：用来识别"本机休眠/冻结"造成的时间跳跃
   };
 
   /** 记录一次"上游还活着"的证据。任何来自 SnowLuma 的事件包都算（含心跳）。 */
@@ -3100,6 +3101,21 @@ async function main() {
 
   /** 边沿触发地告警/恢复，避免每轮探测都刷一行日志。 */
   function reportSnowlumaHealth() {
+    // 先区分「本机休眠/冻结」与「上游真挂了」。
+    // 实测：笔记本进 s2idle 睡了半小时，进程被冻住、定时器一起停摆；
+    // 醒来后第一次 tick 看到"三十多分钟没有事件包"，就误报成「SnowLuma 上游不健康」，
+    // 把人引去查 SnowLuma 日志 —— 而真正原因是本机睡过。
+    // 判定依据：健康检查每 30 秒一次，tick 间隔突然变大 ⇒ 进程被冻结过。
+    const tickNow = Date.now();
+    const tickGap = snowlumaHealth.lastHealthTickAt ? tickNow - snowlumaHealth.lastHealthTickAt : 0;
+    snowlumaHealth.lastHealthTickAt = tickNow;
+    if (tickGap > 120_000) {
+      if (snowlumaHealth.lastPacketAt) snowlumaHealth.lastPacketAt = tickNow;
+      snowlumaHealth.degraded = false;
+      snowlumaHealth.reason = '';
+      log(`⏸️ 检测到本机休眠/冻结约 ${Math.round(tickGap / 60000)} 分钟（定时器在此期间停摆），已重置上游静默基线，跳过本轮上游健康判定`);
+      return;
+    }
     const snap = snowlumaHealthSnapshot();
     if (snap.degraded && !snowlumaHealth.degraded) {
       snowlumaHealth.degraded = true;
@@ -5204,8 +5220,20 @@ async function main() {
             const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
             const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
             const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
-            if ((maxPerMinute > 0 && recentMinute + messages.length > maxPerMinute) || (maxPerHour > 0 && recentHour + messages.length > maxPerHour)) {
-              sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
+            const minuteOver = maxPerMinute > 0 && recentMinute + messages.length > maxPerMinute;
+            const hourOver = maxPerHour > 0 && recentHour + messages.length > maxPerHour;
+            if (minuteOver || hourOver) {
+              // 429 必须告诉模型「还要等多久」：实测热群里撞到每小时上限后，
+              // 模型只看到一句「请稍后再试」，于是连续重试全被拒，最后一个回合卡死在那里干等。
+              const windowMs = minuteOver ? 60_000 : 3_600_000;
+              const stamps = (st.sendTimes || []).filter((t) => now - t < windowMs).sort((a, b) => a - b);
+              const retryAfterMs = stamps.length ? Math.max(1000, Math.min(windowMs, stamps[0] + windowMs - now)) : 1000;
+              sendJson({
+                ok: false,
+                error: `发送频率超限（${minuteOver ? `每分钟上限 ${maxPerMinute} 条` : `每小时上限 ${maxPerHour} 条`}），请等待约 ${Math.ceil(retryAfterMs / 1000)} 秒后再发；期间不要重试`,
+                retryAfterMs,
+                rateLimited: true,
+              }, 429);
               return;
             }
             // 先预占发送额度，避免并发绕过限频
@@ -6092,8 +6120,26 @@ async function main() {
           const defaultMs = Number(waitCfg.defaultMs) || 30000;
           const minMs = Math.max(100, Number(waitCfg.minMs) || 5000);
           const maxMs = Math.max(minMs, Number(waitCfg.maxMs) || 600000);
-          const timeoutMs = Math.min(maxMs, Math.max(minMs, Math.round(Number(body.timeoutMs) || defaultMs)));
+          let timeoutMs = Math.min(maxMs, Math.max(minMs, Math.round(Number(body.timeoutMs) || defaultMs)));
           const st = getSocialV2State(key);
+          // ── 单回合时长兜底 ─────────────────────────────────────────────────
+          // 实测：模型在一个回合里连续调了几十次 qq_wait_for_messages，单次 180~300 秒，
+          // 回合跑二十多分钟仍不结束。期间会话恒为「繁忙」，新 @ 只能塞进 pendingWakeReasons
+          // 排队，群里表现为「@ 了不理」。
+          // 兜底：回合超过预算后把等待钳到很短（不再允许几分钟的空转），并在返回里直接让模型收尾。
+          // 只限制「躺着等」的时长，不改变它的判断逻辑。
+          const turnBudgetMs = Math.max(60_000, Number(cfg.socialV2?.turn?.maxDurationMs) || 20 * 60_000);
+          const turnSessionId = state.sessions[key];
+          const turnStartedAt = turnSessionId ? Number(v2TurnStartAt.get(turnSessionId)) : NaN;
+          const turnElapsedMs = Number.isFinite(turnStartedAt) && turnStartedAt > 0 ? Date.now() - turnStartedAt : 0;
+          const turnOverBudget = turnElapsedMs > turnBudgetMs;
+          if (turnOverBudget) {
+            const clamped = Math.min(timeoutMs, 15_000);
+            if (clamped !== timeoutMs) {
+              log(`[reserved2] ${key} 回合已持续 ${Math.round(turnElapsedMs / 60000)} 分钟（预算 ${Math.round(turnBudgetMs / 60000)} 分钟），把 wait 从 ${Math.round(timeoutMs / 1000)}s 钳到 ${Math.round(clamped / 1000)}s，并提示模型收尾`);
+              timeoutMs = clamped;
+            }
+          }
           // 同一会话只允许一个长轮询等待，避免并发挂起耗尽 HTTP handler。
           // 租约按**归一后的** key 记账：`group:0123` 与 `group:123` 是同一个会话，
           // 用原始 key 会给出两个租约槽（同一会话并发多个 5~10 分钟等待、互相踩水位）。
@@ -6267,6 +6313,11 @@ async function main() {
             lastMessageUnfinished,
             timeout: replyWait ? !quiet : !arrived || (quietMs > 0 && !quiet && Date.now() - start >= timeoutMs),
             waitedMs,
+            // 回合超预算时明确告诉模型「该收尾了」，否则它只会拿被钳短的 timeout 再等一次。
+            ...(turnOverBudget ? {
+              turnOverBudget: true,
+              turnBudgetHint: `本回合已持续 ${Math.round(turnElapsedMs / 60000)} 分钟（预算 ${Math.round(turnBudgetMs / 60000)} 分钟），等待已被钳短。请尽快收尾：qq_mark_read 或 qq_set_wake_config，不要再用长等待。`,
+            } : {}),
             preSleepWaitSatisfied: preSleepSatisfiedNow,
             preSleepWaitObserved: !replyWait && !!st.preSleepWaitObservedAt,
             // 补发被上限截断时告诉模型「还有更老的没给」，它才知道要用 unread(afterSeq=readThroughSeq) 续读。
@@ -9903,7 +9954,27 @@ async function main() {
     st.recentMessages.push(msg);
     if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
     st.unread.push(msg);
-    if (st.unread.length > unreadLimit) st.unread.splice(0, st.unread.length - unreadLimit);
+    if (st.unread.length > unreadLimit) {
+      // 淘汰策略：**先丢与机器人无关的旧消息**，引用/@ 了机器人的消息尽量留到最后。
+      // 为什么不能直接 splice(0, n)：实测一次溢出就丢掉了 57 条，而 qq_get_unread_messages
+      // 只能读缓冲内的消息 —— 一旦被挤出就永远读不回来（连「补读」都做不到）。
+      // 定向消息（quoteTargetIsSelf）恰恰是最该回、最不能丢的那一类，所以给它最高保留优先级。
+      const over = st.unread.length - unreadLimit;
+      let dropped = 0;
+      for (let i = 0; i < st.unread.length && dropped < over; i += 1) {
+        if (st.unread[i]?.quoteTargetIsSelf) continue;
+        st.unread.splice(i, 1);
+        i -= 1;
+        dropped += 1;
+      }
+      if (dropped < over) st.unread.splice(0, st.unread.length - unreadLimit);
+      // 限频记录（每 60 秒最多一条）：丢消息是静默损失，必须留痕，但不能刷屏。
+      const nowEvict = Date.now();
+      if (!Number.isFinite(st.lastEvictLogAt) || nowEvict - st.lastEvictLogAt > 60_000) {
+        st.lastEvictLogAt = nowEvict;
+        log(`[reserved2] ${key} 未读缓冲溢出（上限 ${unreadLimit}），淘汰 ${dropped} 条旧消息；定向消息已优先保留`);
+      }
+    }
     const lowerPlain = String(plainContent ?? textContent ?? '');
     for (const t of st.activeTopics || []) {
       if (!t || typeof t !== 'object') continue;
@@ -9952,7 +10023,27 @@ async function main() {
     st.recentMessages.push(msg);
     if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
     st.unread.push(msg);
-    if (st.unread.length > unreadLimit) st.unread.splice(0, st.unread.length - unreadLimit);
+    if (st.unread.length > unreadLimit) {
+      // 淘汰策略：**先丢与机器人无关的旧消息**，引用/@ 了机器人的消息尽量留到最后。
+      // 为什么不能直接 splice(0, n)：实测一次溢出就丢掉了 57 条，而 qq_get_unread_messages
+      // 只能读缓冲内的消息 —— 一旦被挤出就永远读不回来（连「补读」都做不到）。
+      // 定向消息（quoteTargetIsSelf）恰恰是最该回、最不能丢的那一类，所以给它最高保留优先级。
+      const over = st.unread.length - unreadLimit;
+      let dropped = 0;
+      for (let i = 0; i < st.unread.length && dropped < over; i += 1) {
+        if (st.unread[i]?.quoteTargetIsSelf) continue;
+        st.unread.splice(i, 1);
+        i -= 1;
+        dropped += 1;
+      }
+      if (dropped < over) st.unread.splice(0, st.unread.length - unreadLimit);
+      // 限频记录（每 60 秒最多一条）：丢消息是静默损失，必须留痕，但不能刷屏。
+      const nowEvict = Date.now();
+      if (!Number.isFinite(st.lastEvictLogAt) || nowEvict - st.lastEvictLogAt > 60_000) {
+        st.lastEvictLogAt = nowEvict;
+        log(`[reserved2] ${key} 未读缓冲溢出（上限 ${unreadLimit}），淘汰 ${dropped} 条旧消息；定向消息已优先保留`);
+      }
+    }
     saveSocialV2State();
     return msg;
   }
@@ -11721,7 +11812,10 @@ async function main() {
                 // 以前这里只发 QQ、不写日志：出问题时 bridge.log 里什么都没有，排查只能靠猜（PR #24）。
                 log(`⚠️ agent 处理出错 (${key})：${safeMsg}`);
                 appendActivity(`${key} agent 处理出错：${safeMsg.slice(0, 80)}`);
-                await sendToQQ(key, `⚠️ agent 处理出错：${safeMsg}`);
+                // 不要把错误话术发进 QQ。实测一次 provider 400 风波就让群里连刷了 8 条
+                // 「⚠️ agent 处理出错：…」，群友看到的就是"这机器人在报错"。错误只进日志与活动记录，
+                // 由运维看；对群友来说"没回"比"看到一串英文错误"体验好得多。
+                appendActivity(`${key} 已抑制向 QQ 发送错误提示（仅记录）`);
                 if (isFarewell) {
                   const st = socialState(key);
                   if (st.phase === 'exiting') {
@@ -11732,8 +11826,9 @@ async function main() {
                   }
                 }
               } else if (ended.reason.kind === 'aborted') {
-                log(`⏹️ 回合被中止 (${key})`);
-                await sendToQQ(key, '⏹️ 已停止');
+                log(`⏹️ 回合被中止 (${key})：原因 ${ended.reason?.reason?.kind ?? 'unknown'}`);
+                // 同样不发 QQ：群里真的收到过「⏹️ 已停止」，对方只会莫名。
+                appendActivity(`${key} 回合被中止（${ended.reason?.reason?.kind ?? 'unknown'}），已抑制向 QQ 发送提示`);
                 if (isFarewell) {
                   const st = socialState(key);
                   if (st.phase === 'exiting') {

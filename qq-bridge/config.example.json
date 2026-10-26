@@ -206,6 +206,9 @@
       "defaultQuietMs": 8000,
       "minQuietAfterNewMs": 10000
     },
+    "turn": {
+      "maxDurationMs": 1200000
+    },
     "sticker": {
       "enabled": true,
       "syncTtlMs": 60000,
@@ -245,7 +248,7 @@
     },
     "context": {
       "recentLimit": 100,
-      "unreadLimit": 30,
+      "unreadLimit": 80,
       "contextWindow": 20,
       "inlineWakeMessages": true,
       "wakeMessageLimit": 12,
