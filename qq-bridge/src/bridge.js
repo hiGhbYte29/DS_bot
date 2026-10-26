@@ -6174,6 +6174,18 @@ async function main() {
           // was reading/thinking after its snapshot, before this HTTP request.
           const requestSeq = st.lastUnreadSeq || 0;
           const baseline = replyWait && (v2ToolEnabled('getUnread') || v2ToolEnabled('getRecent')) ? readThroughSeqV2(st) : requestSeq;
+          // 如果一进来就存在"从未交付过"的未读（已读水位 < 收件水位），说明它们是
+          // 上一次交付之后、本次等待开始之前到达的 —— 正是「对方秒回」的典型落点。
+          // 这时不该再轮询，直接归零超时、立刻交付；否则要等到超时（最长 5 分钟）才算这笔账。
+          if (!replyWait && readThroughSeqV2(st) < (st.lastUnreadSeq || 0)) {
+            const unseenSeqs = (st.unread || [])
+              .filter((m) => Number(m?.seq) > Number(readThroughSeqV2(st)))
+              .map((m) => Number(m?.seq));
+            log(`[reserved2] ${key} 等待开始前已有 ${unseenSeqs.length} 条未交付的未读（水位 ${readThroughSeqV2(st)} < ${st.lastUnreadSeq}），把等待上限压到 10s 以免白等 seq=${unseenSeqs.slice(0, 5).join(',')}`);
+            // 不能直接归零：会让"等待期间到达的后续消息"赶不上同一批（批次语义）。
+            // 压到 10 秒既保留合并窗口，又不会让模型空等 5 分钟才发现这些话。
+            timeoutMs = Math.min(timeoutMs, 10_000);
+          }
           const start = Date.now();
           let arrived = false;
           let lastNewAt = 0;
@@ -6295,8 +6307,21 @@ async function main() {
           const pendingTruncated = fullPending.length > pending.length;
           // `arrived` is recomputed against what this request may actually hand over,
           // so a suppressed buffer cannot report an arrival it is not allowed to show.
+          // `arrived` 以前只看"收件水位有没有涨"。于是在**等待开始之前**就已到达、
+          // 但模型从未看过的消息，会被判成"早就知道"，newMessages 直接返回空。
+          // 典型踩坑：群里的游戏 bot 一秒就回，回复正好落在「模型发完消息 → 再发起等待」
+          // 的那几秒空档里，模型等满 5 分钟一无所获，看起来像对方没回。
+          // 现在：只要还有「基线之后仍未交付」的消息（fullPending 非空），就算 arrived 并交付；
+          // 交付后 noteModelMessagesV2 会把它们记成已见、水位推进，不会无限重复。
+          if (fullPending.length > 0 && !arrived) {
+            arrived = true;
+            log(`[reserved2] ${key} 等待命中「等待前已到达但未读」的消息 ${fullPending.length} 条（最老 seq${fullPending[0]?.seq ?? '?'}），按新消息交付`);
+          }
           const newMessages = replyWait ? pending : (arrived ? pending : []);
           const readThroughSeq = req.headers['x-agent-token'] ? noteModelMessagesV2(st, newMessages) : readThroughSeqV2(st);
+          // 明确告诉模型"你还有几条没看过"。有它兜底，即使交付路径因上限/截断漏了什么，
+          // 模型也不会把"没读到"误判成"对方没回"。
+          const unseenAfter = (st.unread || []).filter((m) => Number(m?.seq) > Number(readThroughSeq || 0));
           const lastNew = newMessages.length ? newMessages[newMessages.length - 1]
             : replyWait ? [...st.recentMessages].reverse().find((m) => m && !m.isSelf) : null;
           const lastMessageUnfinished = lastNew ? looksLikeUnfinished(String(lastNew.tail || lastNew.plain || lastNew.text || '')) : false;
@@ -6322,6 +6347,11 @@ async function main() {
             preSleepWaitObserved: !replyWait && !!st.preSleepWaitObservedAt,
             // 补发被上限截断时告诉模型「还有更老的没给」，它才知道要用 unread(afterSeq=readThroughSeq) 续读。
             ...(pendingTruncated ? { partial: true } : {}),
+            // 还有没看过的未读就把口子说清楚，模型才知道该续读而不是接着傻等。
+            ...(unseenAfter.length > 0 ? {
+              pendingUnseen: { count: unseenAfter.length, oldestSeq: Number(unseenAfter[0]?.seq) || null },
+              pendingUnseenHint: `还有 ${unseenAfter.length} 条未读你尚未读取（最早 seq ${Number(unseenAfter[0]?.seq) || '?'}）；用 qq_get_unread_messages(afterSeq=${Number(readThroughSeq) || 0}) 读取，不要当作"对方没回"。`,
+            } : {}),
             // A reply check has no sleep countdown; showing one here suggests
             // the model should complete sleep observation before its first reply.
             ...(!replyWait ? { preSleepWaitMs, preSleepWaitRemainingMs: preSleepRemainingMs } : {}),
