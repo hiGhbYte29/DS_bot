@@ -91,6 +91,9 @@ DS_bot/
 │   ├── docs/                    # 上游使用与兼容说明
 │   ├── config.example.json      # 无账号和密钥的配置模板
 │   └── package.json             # npm 依赖与命令
+├── docs/                        # 扩展开发指南与已知失效模式（去标识）
+│   ├── how-to-extend.md         # 分层边界、扩展 recipe、硬约束、生效矩阵
+│   └── known-issues.md          # 「看起来不回复」的失效模式与排查顺序
 ├── ops/
 │   ├── README.md                # 公开运维模板使用说明
 │   ├── status.mjs               # 只读连接状态检查
@@ -140,6 +143,21 @@ SnowLuma 的安装、启动和 QQ 登录由使用者独立完成。不要同时�
 
 角色及部分控制台配置可热更新；MCP 工具清单和预设更新通常需要重启 DSH。
 管理控制台修改与直接编辑文件的生效方式不同，具体以对应模块实现为准。
+
+改动前先判断**代码该落在哪一层**，这是本项目最主要的返工来源：凡是「消息要不要被响应、什么时候醒、
+醒来跟谁说话」属于桥接（`src/bridge.js`）；凡是「模型该知道什么、能调哪些工具、以什么口吻说话」属于
+DSH 的 agent preset（人格正文在 `dsh/agent-presets/qq-chat-v2/agent.cordis.yml`）；模型与上下文压缩
+策略属于 DSH profile 配置；SnowLuma 是上游，只通过 `config.json` 接入、不改其代码。新增一个模型可调用的
+动作要同时改两处：在 `src/mcp-snowluma-safe.js` 实现工具、经 `agentApi()` 打桥接执行接口，在
+`config.json` 的 `socialV2.tools` 加一个默认关闭的开关，把工具名加进
+`plugins/qq-agent-presets/qq-tool-restrict.mjs` 白名单，最后**先重启桥接、再重启 DSH**（MCP 工具清单在
+启动时枚举，不重启看不到新工具）。只改说话风格或行为规则，则只动 persona 正文并重新生成、注册预设，
+注意已有会话不会重建 system prompt。不涉及模型的自动化（审计、限流、摘要、定时）直接写在桥接里。
+
+完整决策表、四个 recipe（加工具 / 改人格 / 加自动化 / 加控制台接口）、硬约束与变更生效矩阵见
+[docs/how-to-extend.md](docs/how-to-extend.md)；「机器人看起来不想说话」的几种真实故障（会话被归档拦截、
+历史含非法字符导致永久 400、唤醒判定漏判、忙期积压被丢弃）及排查顺序见
+[docs/known-issues.md](docs/known-issues.md)。
 
 ## 发布与隐私
 

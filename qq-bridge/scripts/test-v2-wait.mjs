@@ -73,11 +73,16 @@ for (const text of finishedCases) {
 
 // 3. 配置允许长等待
 try {
-  const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+  // 公开仓库里没有 config.json（被 .gitignore 排除：含账号与令牌）。
+  // 退回到 config.example.json，这样新克隆后不复制真实配置也能跑测试。
+  const realConfig = path.join(ROOT, 'config.json');
+  const configPath = fs.existsSync(realConfig) ? realConfig : path.join(ROOT, 'config.example.json');
+  if (configPath !== realConfig) console.log(`ℹ️ 未找到 config.json，改用 ${path.basename(configPath)} 校验`);
+  const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   const maxMs = Number(cfg.socialV2?.wait?.maxMs) || 0;
   assert(maxMs >= END_ROUND_WAIT_MAX_MS, `wait.maxMs=${maxMs} >= 600000`);
 } catch (error) {
-  console.error('❌ 读取 config.json 失败:', error.message);
+  console.error('❌ 读取配置失败:', error.message);
   failed = 1;
 }
 
