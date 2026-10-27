@@ -6,6 +6,7 @@ __pycache__/
 coverage/
 dist/
 .cache/
+/output/imagegen/dafeiyu-stickers-20261028/
 
 # Credentials and real deployment configuration
 .env
