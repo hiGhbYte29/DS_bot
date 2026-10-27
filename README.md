@@ -92,6 +92,7 @@ DS_bot/
 │   ├── config.example.json      # 无账号和密钥的配置模板
 │   └── package.json             # npm 依赖与命令
 ├── docs/                        # 扩展开发指南、设计方案与已知失效模式（去标识）
+│   ├── CodePlan.md              # 项目未来开发计划（待补充）
 │   ├── how-to-extend.md         # 分层边界、扩展 recipe、硬约束、生效矩阵
 │   ├── known-issues.md          # 「看起来不回复」的失效模式与排查顺序
 │   └── memory-affinity-v1.md    # 会话独立的长短期记忆与好感度 V1 设计（尚未实现）
@@ -162,6 +163,8 @@ DSH 的 agent preset（人格正文在 `dsh/agent-presets/qq-chat-v2/agent.cordi
 
 会话独立的长短期记忆、用户偏好与好感度的第一版设计见
 [docs/memory-affinity-v1.md](docs/memory-affinity-v1.md)，包含首版范围、数据模型、接入边界及验收清单；当前尚未实现或启用。
+
+项目未来的开发计划记录在 [docs/CodePlan.md](docs/CodePlan.md)（目前为空，待补充）。
 
 ## 发布与隐私
 
