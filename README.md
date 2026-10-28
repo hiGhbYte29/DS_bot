@@ -91,9 +91,11 @@ DS_bot/
 │   ├── docs/                    # 上游使用与兼容说明
 │   ├── config.example.json      # 无账号和密钥的配置模板
 │   └── package.json             # npm 依赖与命令
-├── docs/                        # 扩展开发指南与已知失效模式（去标识）
+├── docs/                        # 扩展开发指南、设计方案与已知失效模式（去标识）
+│   ├── CodePlan.md              # 项目未来开发计划
 │   ├── how-to-extend.md         # 分层边界、扩展 recipe、硬约束、生效矩阵
-│   └── known-issues.md          # 「看起来不回复」的失效模式与排查顺序
+│   ├── known-issues.md          # 「看起来不回复」的失效模式与排查顺序
+│   └── memory-affinity-v1.md    # 会话独立的长短期记忆与好感度 V1 设计（尚未实现）
 ├── ops/
 │   ├── README.md                # 公开运维模板使用说明
 │   ├── status.mjs               # 只读连接状态检查
@@ -158,6 +160,11 @@ DSH 的 agent preset（人格正文在 `dsh/agent-presets/qq-chat-v2/agent.cordi
 [docs/how-to-extend.md](docs/how-to-extend.md)；「机器人看起来不想说话」的几种真实故障（会话被归档拦截、
 历史含非法字符导致永久 400、唤醒判定漏判、忙期积压被丢弃）及排查顺序见
 [docs/known-issues.md](docs/known-issues.md)。
+
+会话独立的长短期记忆、用户偏好与好感度的第一版设计见
+[docs/memory-affinity-v1.md](docs/memory-affinity-v1.md)，包含首版范围、数据模型、接入边界及验收清单；当前尚未实现或启用。
+
+项目未来的开发计划记录在 [docs/CodePlan.md](docs/CodePlan.md)。
 
 ## 发布与隐私
 
