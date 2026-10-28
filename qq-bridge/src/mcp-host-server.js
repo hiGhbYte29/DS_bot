@@ -25,6 +25,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { readOneBotRouteOverride } from './onebot-route.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -43,7 +44,13 @@ function getConfig() {
   return loadConfig();
 }
 
+// 开发用的 OneBot 路由覆盖（环境变量，由 DSH 进程传下来，见 onebot-route.js）。
+// 不设变量时为 null，下面照常读 config.json。设了但不合法会在这里抛错、进程启动失败。
+const ONEBOT_ROUTE = readOneBotRouteOverride(process.env);
+if (ONEBOT_ROUTE) console.error(`[snowluma-host] ⚠️ OneBot 路由已被环境变量覆盖：HTTP ${ONEBOT_ROUTE.httpUrl}`);
+
 function getHostConfig() {
+  if (ONEBOT_ROUTE) return { httpUrl: ONEBOT_ROUTE.httpUrl, homeDir: '', token: ONEBOT_ROUTE.accessToken };
   const c = getConfig();
   const httpUrl = (c.snowluma?.httpUrl ?? 'http://127.0.0.1:3000').replace(/\/+$/, '');
   const homeDir = c.snowluma?.homeDir ?? (c.snowluma?.launcherPath ? path.dirname(c.snowluma.launcherPath) : '');

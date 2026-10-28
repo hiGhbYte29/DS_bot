@@ -5,6 +5,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { test } from 'node:test';
 import { z } from 'zod';
+import { readOneBotRouteOverride } from '../src/onebot-route.js';
 
 function loadWebTools({ safeFetch, webSearch }) {
   const tools = new Map();
@@ -123,6 +124,8 @@ function loadSnowlumaTools(fetchImpl, fixtureConfig = null, httpImpl = null, fix
     fs: modeAwareFs,
     SENSITIVE_RE: { test: () => false },
     serializeModelData: (value) => JSON.stringify(value),
+    // 用空环境求值：开发者终端里设了路由覆盖变量也不能影响这些断言。
+    readOneBotRouteOverride: () => readOneBotRouteOverride({}),
   });
   const callTool = async (name, arguments_ = {}) => {
     const tool = tools.get(name);

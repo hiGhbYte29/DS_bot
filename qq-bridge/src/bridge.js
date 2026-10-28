@@ -25,6 +25,7 @@ import { safeFetchBuffer, looksLikeImageBuffer } from './safe-fetch.js';
 import { normalizeImageForModel } from './media-normalize.js';
 import { AUDIO_EXTS, cleanupTemp, describeAudio, formatBytes, formatDuration, inspectAudio, listAudioFiles, parseTargetKey, processAudioVolume, resolveAudioProcessing, resolveAudioSource, safeJoinLibrary } from './send-voice-lib.js';
 import { discoverSnowLumaConnection, persistSnowLumaEndpoint, persistToken } from './snowluma-conn.js';
+import { readOneBotRouteOverride, applyOneBotRouteOverride } from './onebot-route.js';
 import { hardenDir, manualDirCommand } from './state-acl.mjs';
 import { extractForwardIds, forwardIdFromData, sanitizeForwardId, formatForwardResponse } from './forward.js';
 import { resolvePriceTable } from './model-prices.js';
@@ -651,6 +652,9 @@ function normalizeIdList(value) {
 }
 
 // ── 配置 ────────────────────────────────────────────────────────────────────
+// 开发用的 OneBot 路由覆盖（环境变量，见 onebot-route.js）。null = 未启用，生产环境应始终是 null。
+let onebotRouteOverride = null;
+
 function loadConfig() {
   const p = path.join(ROOT, 'config.json');
   const file = readJsonSafe(p, null, true);
@@ -999,6 +1003,14 @@ function loadConfig() {
   roleInjectMaxChars = applyRoleInjectLimit(cfg.role.maxInjectChars);
   if (roleInjectMaxChars !== cfg.role.maxInjectChars) {
     log(`人格注入上限已按范围校正为 ${roleInjectMaxChars} 字符（配置值 ${cfg.role.maxInjectChars}，允许 1000~20000）`);
+  }
+
+  // 变量设了但不合法时直接抛错、启动失败：宁可起不来，也不要半覆盖地连到错误的网关。
+  onebotRouteOverride = readOneBotRouteOverride(process.env);
+  if (onebotRouteOverride) {
+    cfg.snowluma = applyOneBotRouteOverride(cfg.snowluma, onebotRouteOverride);
+    log(`⚠️ OneBot 路由已被环境变量覆盖：WS ${onebotRouteOverride.wsUrl}，HTTP ${onebotRouteOverride.httpUrl}。`
+      + 'token 自愈与 config.json 写回已关闭。生产环境不应出现这条日志。');
   }
 
   return cfg;
@@ -3087,6 +3099,7 @@ async function main() {
       // `bot`：它在本闭包里声明得晚得多（`const`，TDZ），一旦有人把本函数提前调用就会
       // 抛 "Cannot access 'bot' before initialization"。
       connected: snowlumaHealth.connected,
+      routeOverride: onebotRouteOverride !== null,
       accountOnline: snowlumaHealth.accountOnline,
       good: snowlumaHealth.good,
       goodSource: snowlumaHealth.goodSource || null,
@@ -12141,6 +12154,8 @@ async function main() {
 
   /** 只写文件、不动物件（连接已成功时用）。 */
   async function syncTokenToFile() {
+    // 路由被覆盖时 cfg.snowluma 是虚拟网关的连接参数，写回去就污染了真实配置。
+    if (onebotRouteOverride) return;
     try {
       const r = persistToken(path.join(ROOT, 'config.json'), cfg.snowluma.accessToken ?? '');
       // 只记「已写回」，不打印 token 片段：日志会被贴进 issue / 截图，
@@ -12151,6 +12166,8 @@ async function main() {
 
   let tokenHealAt = 0;
   async function healTokenIfStale(reason) {
+    // 路由被覆盖时不自愈：自愈会去读本机真实 SnowLuma 的配置，并把结果写回 config.json。
+    if (onebotRouteOverride) return;
     const now = Date.now();
     if (now - tokenHealAt < 10000) return;   // 节流：close 事件会连续触发
     tokenHealAt = now;
