@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>虚拟 QQ · mock-onebot</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --line: #e4e6eb; --text: #1f2329; --muted: #8a8f99;
+    --accent: #2f6fed; --accent-soft: #e8f0fe; --bot: #ffffff; --me: #95ec69; --danger: #d93025; --ok: #1e8e3e;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; color: var(--text); background: var(--bg); }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 4px 10px; color: var(--text); }
+  button:hover { border-color: #c9ccd2; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.link { border: none; background: none; color: var(--accent); padding: 0 4px; }
+  input, select, textarea { font: inherit; color: var(--text); }
+  .app { display: grid; grid-template-columns: 280px 1fr; height: 100%; }
+
+  /* 侧栏 */
+  .sidebar { background: #fbfbfc; border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  .brand { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+  .brand h1 { font-size: 15px; margin: 0 0 6px; }
+  .bridge { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); flex: none; }
+  .dot.on { background: var(--ok); }
+  .conv-list { flex: 1; overflow-y: auto; }
+  .conv { display: flex; gap: 10px; padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f1f3; }
+  .conv:hover { background: #f2f3f5; }
+  .conv.active { background: var(--accent-soft); }
+  .avatar { width: 36px; height: 36px; border-radius: 8px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 600; font-size: 14px; }
+  .conv-main { min-width: 0; flex: 1; }
+  .conv-top { display: flex; justify-content: space-between; gap: 6px; }
+  .conv-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .conv-time { font-size: 11px; color: var(--muted); flex: none; }
+  .conv-last { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { background: var(--danger); color: #fff; border-radius: 9px; font-size: 11px; padding: 0 6px; margin-left: 4px; }
+  .side-foot { border-top: 1px solid var(--line); padding: 10px 14px; display: grid; gap: 8px; }
+  .debug { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  .debug label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+
+  /* 聊天区 */
+  .chat { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+  .chat-head { background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .chat-head h2 { font-size: 15px; margin: 0; }
+  .chat-head .sub { font-size: 12px; color: var(--muted); }
+  .messages { flex: 1; overflow-y: auto; padding: 16px 18px 8px; }
+  .empty { color: var(--muted); text-align: center; margin-top: 18vh; line-height: 2; }
+  .sys { text-align: center; font-size: 12px; color: var(--muted); margin: 10px 0; }
+  .msg { display: flex; gap: 8px; margin: 10px 0; align-items: flex-start; }
+  .msg.user { flex-direction: row-reverse; }
+  .msg .avatar { width: 34px; height: 34px; font-size: 13px; }
+  .body { max-width: min(560px, 72%); display: flex; flex-direction: column; }
+  .msg.user .body { align-items: flex-end; }
+  .meta { font-size: 12px; color: var(--muted); margin: 0 2px 3px; display: flex; gap: 6px; align-items: center; }
+  .meta .reply-btn { visibility: hidden; }
+  .msg:hover .meta .reply-btn { visibility: visible; }
+  .bubble { background: var(--bot); border-radius: var(--radius); padding: 8px 11px; white-space: pre-wrap; word-break: break-word; box-shadow: 0 1px 1px rgba(0,0,0,.04); }
+  .msg.user .bubble { background: var(--me); }
+  .msg.recalled .bubble { opacity: .45; text-decoration: line-through; }
+  .quote { border-left: 3px solid rgba(0,0,0,.2); background: rgba(0,0,0,.05); border-radius: 4px; padding: 3px 8px; margin-bottom: 6px; font-size: 12px; color: #4b5059; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 420px; cursor: pointer; }
+  .at { color: var(--accent); }
+  .bubble img { display: block; max-width: 240px; max-height: 240px; border-radius: 6px; margin: 4px 0; }
+  .placeholder { color: var(--muted); }
+  .msg.flash .bubble { outline: 2px solid var(--accent); }
+  .waiting { font-size: 12px; color: var(--muted); padding: 0 18px 6px; min-height: 18px; }
+
+  /* 输入区 */
+  .composer { background: var(--panel); border-top: 1px solid var(--line); padding: 8px 14px 12px; }
+  .tools { display: flex; align-items: center; gap: 12px; font-size: 13px; margin-bottom: 6px; flex-wrap: wrap; }
+  .tools select { padding: 2px 4px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .tools label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .pending { display: flex; align-items: center; gap: 8px; background: var(--accent-soft); border-radius: 6px; padding: 4px 8px; margin-bottom: 6px; font-size: 12px; }
+  .pending .text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pending img { height: 40px; border-radius: 4px; }
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
+  textarea { flex: 1; resize: none; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px; max-height: 160px; outline: none; }
+  textarea:focus { border-color: var(--accent); }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: #323232; color: #fff; padding: 8px 14px; border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
+  .toast.show { opacity: .95; }
+  .banner { background: #fdecea; color: var(--danger); font-size: 12px; padding: 6px 18px; display: none; }
+  .banner.show { display: block; }
+
+  dialog { border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; width: 320px; }
+  dialog::backdrop { background: rgba(0,0,0,.25); }
+  dialog h3 { margin: 0 0 12px; font-size: 15px; }
+  dialog .row { display: grid; gap: 4px; margin-bottom: 10px; font-size: 13px; }
+  dialog input, dialog select { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  dialog .err { color: var(--danger); font-size: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>虚拟 QQ</h1>
+      <div class="bridge"><span class="dot" id="bridgeDot"></span><span id="bridgeText">连接中…</span></div>
+    </div>
+    <div class="conv-list" id="convList"></div>
+    <div class="side-foot">
+      <button id="newConvBtn">＋ 新会话</button>
+      <div class="debug">
+        <span>机器人账号：</span>
+        <label><input type="checkbox" id="onlineBox"> 在线</label>
+        <label><input type="checkbox" id="goodBox"> 收消息正常</label>
+        <button class="link" id="dropBtn" title="模拟网关崩溃，桥接应自动重连">断开桥接</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="chat">
+    <div class="banner" id="banner">和虚拟网关的连接断了，正在重连…</div>
+    <header class="chat-head">
+      <div>
+        <h2 id="chatTitle">—</h2>
+        <div class="sub" id="chatSub"></div>
+      </div>
+      <button id="pokeBtn" title="以当前身份拍一拍机器人">拍一拍机器人</button>
+    </header>
+    <div class="messages" id="messages"></div>
+    <div class="waiting" id="waiting"></div>
+    <footer class="composer">
+      <div class="tools">
+        <span id="identityWrap">身份
+          <select id="identity"></select>
+        </span>
+        <label id="atWrap"><input type="checkbox" id="atBot" checked> @机器人</label>
+        <button class="link" id="imgBtn">图片</button>
+        <input type="file" id="fileInput" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" hidden>
+      </div>
+      <div class="pending" id="quoteBar" hidden><span class="text" id="quoteText"></span><button class="link" id="quoteClear">取消</button></div>
+      <div class="pending" id="imageBar" hidden><img id="imagePreview" alt=""><span class="text" id="imageName"></span><button class="link" id="imageClear">移除</button></div>
+      <div class="input-row">
+        <textarea id="input" rows="1" placeholder="说点什么…"></textarea>
+        <button class="primary" id="sendBtn">发送</button>
+      </div>
+      <div class="hint">Enter 发送 · Shift+Enter 换行 · 可直接粘贴图片 · 鼠标移到消息上可以「回复」</div>
+    </footer>
+  </main>
+</div>
+
+<dialog id="convDialog">
+  <h3>新会话</h3>
+  <div class="row"><span>类型</span>
+    <select id="dlgKind"><option value="group">群聊</option><option value="private">私聊</option></select>
+  </div>
+  <div class="row"><span id="dlgIdLabel">群号</span><input id="dlgId" inputmode="numeric" placeholder="例如 999002"></div>
+  <div class="row"><span id="dlgNameLabel">群名</span><input id="dlgName" placeholder="可不填"></div>
+  <div class="err" id="dlgErr"></div>
+  <div class="hint" style="margin-bottom:8px">记得把号码加进桥接 config.json 的 allow 白名单，否则机器人不会理。</div>
+  <div class="actions"><button id="dlgCancel">取消</button><button class="primary" id="dlgOk">创建</button></div>
+</dialog>
+
+<dialog id="idDialog">
+  <h3>新身份</h3>
+  <div class="row"><span>QQ 号</span><input id="idQQ" inputmode="numeric" placeholder="例如 20002"></div>
+  <div class="row"><span>昵称</span><input id="idNick" placeholder="例如 小红"></div>
+  <div class="err" id="idErr"></div>
+  <div class="actions"><button id="idCancel">取消</button><button class="primary" id="idOk">确定</button></div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const WAIT_LIMIT_MS = 180000;
+const COLORS = ['#5b8def', '#f08c4f', '#3fb27f', '#b36bd6', '#e05a7a', '#2ba3b5', '#c4a03a', '#7a86a8'];
+
+const state = {
+  status: { wsClients: 0, selfId: 0, nickname: '机器人', online: true, good: true },
+  conversations: [],
+  current: localStorage.getItem('mock.current') || '',
+  messages: new Map(),   // key → [message]
+  unread: new Map(),     // key → 数量
+  waiting: new Map(),    // key → 发送时间（等机器人回复）
+  quote: null,           // { message_id, text }
+  image: null,           // { data, name, url }
+  sending: false,
+};
+
+// ── 工具 ──────────────────────────────────────────────────────────────────
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+}
+function colorOf(id) { return COLORS[Math.abs(Number(id) || 0) % COLORS.length]; }
+function avatar(name, id, isBot) {
+  const a = el('div', 'avatar', isBot ? '机' : String(name || '?').slice(0, 1));
+  a.style.background = isBot ? '#2f6fed' : colorOf(id);
+  return a;
+}
+function hhmm(sec) { return new Date(sec * 1000).toTimeString().slice(0, 5); }
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+async function api(route, body) {
+  const res = await fetch(`/__mock/${route}`, body === undefined ? {} : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+const conv = (key) => state.conversations.find((c) => c.key === key);
+const isGroup = (key) => String(key).startsWith('group:');
+
+function nameOf(userId, key) {
+  if (Number(userId) === state.status.selfId) return state.status.nickname;
+  const c = conv(key);
+  const m = c?.members?.find((x) => x.user_id === Number(userId));
+  if (m) return m.card || m.nickname;
+  if (c?.kind === 'private' && c.id === Number(userId)) return c.name;
+  return String(userId);
+}
+
+// ── 身份（每个群记住上次用的身份） ────────────────────────────────────────
+function identities(key) {
+  const c = conv(key);
+  const list = (c?.members ?? []).map((m) => ({ user_id: m.user_id, nickname: m.nickname }));
+  const extra = JSON.parse(localStorage.getItem('mock.identities') || '[]');
+  for (const e of extra) if (!list.some((x) => x.user_id === e.user_id)) list.push(e);
+  if (!list.some((x) => x.user_id === 20001)) list.unshift({ user_id: 20001, nickname: '测试用户' });
+  return list;
+}
+function renderIdentity() {
+  const key = state.current;
+  const group = isGroup(key);
+  $('identityWrap').hidden = !group;
+  $('atWrap').hidden = !group;
+  if (!group) return;
+  const sel = $('identity');
+  sel.textContent = '';
+  for (const i of identities(key)) {
+    const o = el('option', '', `${i.nickname}（${i.user_id}）`);
+    o.value = String(i.user_id);
+    o.dataset.nick = i.nickname;
+    sel.append(o);
+  }
+  const add = el('option', '', '＋ 新身份…');
+  add.value = '__new';
+  sel.append(add);
+  const saved = localStorage.getItem(`mock.identity.${key}`);
+  if (saved && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+}
+$('identity').addEventListener('change', () => {
+  if ($('identity').value === '__new') { openIdDialog(); return; }
+  localStorage.setItem(`mock.identity.${state.current}`, $('identity').value);
+});
+function openIdDialog() {
+  $('idQQ').value = ''; $('idNick').value = ''; $('idErr').textContent = '';
+  $('idDialog').showModal();
+  $('idQQ').focus();
+}
+$('idCancel').onclick = () => { $('idDialog').close(); renderIdentity(); };
+$('idOk').onclick = () => {
+  const qq = Number($('idQQ').value.trim());
+  const nick = $('idNick').value.trim() || `用户${qq}`;
+  if (!Number.isSafeInteger(qq) || qq <= 0) { $('idErr').textContent = 'QQ 号要是正整数'; return; }
+  if (qq === state.status.selfId) { $('idErr').textContent = '不能用机器人自己的号'; return; }
+  const extra = JSON.parse(localStorage.getItem('mock.identities') || '[]').filter((e) => e.user_id !== qq);
+  extra.push({ user_id: qq, nickname: nick });
+  localStorage.setItem('mock.identities', JSON.stringify(extra));
+  localStorage.setItem(`mock.identity.${state.current}`, String(qq));
+  $('idDialog').close();
+  renderIdentity();
+};
+
+// ── 会话列表 ───────────────────────────────────────────────────────────────
+function renderConversations() {
+  const list = $('convList');
+  list.textContent = '';
+  for (const c of state.conversations) {
+    const row = el('div', 'conv' + (c.key === state.current ? ' active' : ''));
+    row.append(avatar(c.kind === 'group' ? '群' : c.name, c.id));
+    const main = el('div', 'conv-main');
+    const top = el('div', 'conv-top');
+    const name = el('span', 'conv-name', c.name);
+    const n = state.unread.get(c.key);
+    if (n) name.append(el('span', 'badge', String(n)));
+    top.append(name, el('span', 'conv-time', c.last ? hhmm(c.last.time) : ''));
+    const last = c.last ? `${c.kind === 'group' ? c.last.sender + '：' : ''}${c.last.text}` : (c.kind === 'group' ? `群 ${c.id}` : `QQ ${c.id}`);
+    main.append(top, el('div', 'conv-last', last));
+    row.append(main);
+    row.onclick = () => select(c.key);
+    list.append(row);
+  }
+}
+async function loadConversations() {
+  state.conversations = await api('conversations');
+  if (!conv(state.current)) state.current = state.conversations[0]?.key || '';
+  renderConversations();
+}
+
+// ── 消息 ───────────────────────────────────────────────────────────────────
+function segmentNodes(m) {
+  const out = [];
+  for (const seg of m.segments) {
+    const d = seg.data || {};
+    if (seg.type === 'text') out.push(document.createTextNode(d.text ?? ''));
+    else if (seg.type === 'at') out.push(el('span', 'at', `@${d.qq === 'all' ? '全体成员' : nameOf(d.qq, m.key)} `));
+    else if (seg.type === 'image' || seg.type === 'mface') {
+      const src = imageSrc(d);
+      if (src) { const img = el('img'); img.src = src; img.alt = '图片'; img.loading = 'lazy'; out.push(img); }
+      else out.push(el('span', 'placeholder', seg.type === 'mface' ? '[表情包]' : '[图片]'));
+    } else if (seg.type === 'face') out.push(el('span', 'placeholder', `[表情${d.id ?? ''}]`));
+    else if (seg.type === 'record') out.push(el('span', 'placeholder', '[语音]'));
+    else if (seg.type === 'reply') { /* 单独渲染成引用块 */ }
+    else out.push(el('span', 'placeholder', `[${seg.type}]`));
+  }
+  return out;
+}
+function imageSrc(d) {
+  const file = String(d.file ?? '');
+  if (/^[0-9A-F]{32}\.\w+$/.test(file)) return `/__mock/image/${encodeURIComponent(file)}`;
+  if (file.startsWith('base64://')) return `data:image/png;base64,${file.slice(9)}`;
+  if (/^data:image\//.test(file)) return file;
+  const url = String(d.url || (/^https?:\/\//.test(file) ? file : ''));
+  return /^https?:\/\//.test(url) ? url : '';
+}
+function findMessage(key, id) { return (state.messages.get(key) || []).find((m) => m.message_id === Number(id)); }
+
+function messageNode(m) {
+  const isBot = m.self;
+  const row = el('div', 'msg ' + (isBot ? 'bot' : 'user') + (m.recalled ? ' recalled' : ''));
+  row.dataset.id = m.message_id;
+  row.append(avatar(isBot ? '' : (m.sender.card || m.sender.nickname), m.sender.user_id, isBot));
+  const body = el('div', 'body');
+  const meta = el('div', 'meta');
+  const who = isBot ? state.status.nickname : (m.sender.card || m.sender.nickname);
+  meta.append(el('span', '', isGroup(m.key) || isBot ? who : ''), el('span', '', `${hhmm(m.time)} #${m.message_id}`));
+  const replyBtn = el('button', 'link reply-btn', '回复');
+  replyBtn.onclick = () => setQuote(m);
+  meta.append(replyBtn);
+  const bubble = el('div', 'bubble');
+  const reply = m.segments.find((s) => s.type === 'reply');
+  if (reply) {
+    const target = findMessage(m.key, reply.data?.id);
+    const q = el('div', 'quote', target ? `${target.self ? state.status.nickname : (target.sender.card || target.sender.nickname)}：${target.text}` : `回复 #${reply.data?.id}`);
+    q.title = '跳到这条消息';
+    q.onclick = () => flash(reply.data?.id);
+    bubble.append(q);
+  }
+  bubble.append(...segmentNodes(m));
+  body.append(meta, bubble);
+  row.append(body);
+  return row;
+}
+function sysNode(text) { return el('div', 'sys', text); }
+
+function renderMessages() {
+  const box = $('messages');
+  box.textContent = '';
+  const c = conv(state.current);
+  $('chatTitle').textContent = c ? c.name : '还没有会话';
+  $('chatSub').textContent = c ? (c.kind === 'group' ? `群 ${c.id} · ${(c.members?.length ?? 0) + 1} 人` : `私聊 · QQ ${c.id}`) : '';
+  const list = state.messages.get(state.current) || [];
+  if (!c) { box.append(el('div', 'empty', '点左下角「新会话」建一个群或私聊')); return; }
+  if (!list.length) {
+    box.append(el('div', 'empty', c.kind === 'group' ? '发一条消息试试，勾上「@机器人」最容易叫醒它' : '发一条私聊试试'));
+    return;
+  }
+  for (const m of list) box.append(m.poke ? sysNode(m.poke) : messageNode(m));
+  box.scrollTop = box.scrollHeight;
+}
+function appendMessage(m) {
+  const box = $('messages');
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  if (box.querySelector('.empty')) box.textContent = '';
+  box.append(m.poke ? sysNode(m.poke) : messageNode(m));
+  if (nearBottom || (!m.self && !m.poke)) box.scrollTop = box.scrollHeight;
+}
+function flash(id) {
+  const n = $('messages').querySelector(`.msg[data-id="${CSS.escape(String(id))}"]`);
+  if (!n) { toast('这条消息不在当前列表里'); return; }
+  n.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  n.classList.add('flash');
+  setTimeout(() => n.classList.remove('flash'), 1200);
+}
+
+async function select(key) {
+  state.current = key;
+  localStorage.setItem('mock.current', key);
+  state.unread.delete(key);
+  clearQuote();
+  renderConversations();
+  renderIdentity();
+  if (key && !state.messages.has(key)) state.messages.set(key, await api(`messages?key=${encodeURIComponent(key)}`));
+  renderMessages();
+  renderWaiting();
+  $('input').focus();
+}
+
+// ── 等待机器人回复的提示 ───────────────────────────────────────────────────
+function renderWaiting() {
+  const since = state.waiting.get(state.current);
+  const w = $('waiting');
+  if (!since) { w.textContent = ''; return; }
+  const sec = Math.floor((Date.now() - since) / 1000);
+  if (Date.now() - since > WAIT_LIMIT_MS) {
+    state.waiting.delete(state.current);
+    w.textContent = `${Math.floor(WAIT_LIMIT_MS / 60000)} 分钟没回复：机器人可能选择不说话，或者 DSH 没在跑（看桥接日志）`;
+    setTimeout(() => { if (!state.waiting.get(state.current)) w.textContent = ''; }, 6000);
+    return;
+  }
+  w.textContent = `${state.status.nickname} 正在思考…（${sec}s）`;
+}
+setInterval(renderWaiting, 1000);
+
+// ── 发送 ───────────────────────────────────────────────────────────────────
+function setQuote(m) {
+  state.quote = { message_id: m.message_id };
+  $('quoteText').textContent = `回复 #${m.message_id} ${m.self ? state.status.nickname : (m.sender.card || m.sender.nickname)}：${m.text}`;
+  $('quoteBar').hidden = false;
+  $('input').focus();
+}
+function clearQuote() { state.quote = null; $('quoteBar').hidden = true; }
+$('quoteClear').onclick = clearQuote;
+
+function setImage(file) {
+  if (!file) return;
+  if (!/^image\/(png|jpeg|gif|webp|bmp)$/.test(file.type)) { toast('只支持 png / jpg / gif / webp / bmp'); return; }
+  if (file.size > 8 * 1024 * 1024) { toast('图片不能超过 8MB'); return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const ext = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/bmp': '.bmp' }[file.type];
+    state.image = { data: String(reader.result), name: (file.name && /\.\w+$/.test(file.name)) ? file.name : `paste${ext}` };
+    $('imagePreview').src = String(reader.result);
+    $('imageName').textContent = state.image.name;
+    $('imageBar').hidden = false;
+  };
+  reader.readAsDataURL(file);
+}
+function clearImage() { state.image = null; $('imageBar').hidden = true; $('fileInput').value = ''; }
+$('imgBtn').onclick = () => $('fileInput').click();
+$('fileInput').onchange = () => setImage($('fileInput').files[0]);
+$('imageClear').onclick = clearImage;
+$('input').addEventListener('paste', (e) => {
+  const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+  if (item) { e.preventDefault(); setImage(item.getAsFile()); }
+});
+
+async function send() {
+  const key = state.current;
+  const text = $('input').value.trim();
+  if (!key || state.sending) return;
+  if (!text && !state.image) { toast('先写点什么'); return; }
+  const body = { key, text };
+  if (isGroup(key)) {
+    const opt = $('identity').selectedOptions[0];
+    if (!opt || opt.value === '__new') { toast('先选一个身份'); return; }
+    body.userId = Number(opt.value);
+    body.nickname = opt.dataset.nick;
+    body.atSelf = $('atBot').checked;
+  }
+  if (state.quote) body.replyTo = state.quote.message_id;
+  if (state.image) body.image = { data: state.image.data, name: state.image.name };
+  state.sending = true;
+  $('sendBtn').disabled = true;
+  try {
+    const r = await api('send', body);
+    $('input').value = '';
+    autosize();
+    clearQuote();
+    clearImage();
+    if (!r.delivered) toast('桥接没连上虚拟网关，这条消息它收不到');
+    else { state.waiting.set(key, Date.now()); renderWaiting(); }
+  } catch (error) {
+    toast(`发送失败：${error.message}`);
+  } finally {
+    state.sending = false;
+    $('sendBtn').disabled = false;
+    $('input').focus();
+  }
+}
+$('sendBtn').onclick = send;
+$('input').addEventListener('keydown', (e) => {
+  // isComposing：中文输入法选词时按回车不应该发送
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); send(); }
+});
+function autosize() { const t = $('input'); t.style.height = 'auto'; t.style.height = Math.min(160, t.scrollHeight) + 'px'; }
+$('input').addEventListener('input', autosize);
+
+$('pokeBtn').onclick = async () => {
+  const key = state.current;
+  if (!key) return;
+  const body = { key };
+  if (isGroup(key)) body.userId = Number($('identity').value) || 20001;
+  try {
+    await api('poke', body);
+  } catch (error) { toast(`拍一拍失败：${error.message}`); }
+};
+
+// ── 新会话 ─────────────────────────────────────────────────────────────────
+function syncDialogLabels() {
+  const g = $('dlgKind').value === 'group';
+  $('dlgIdLabel').textContent = g ? '群号' : 'QQ 号';
+  $('dlgNameLabel').textContent = g ? '群名' : '昵称';
+  $('dlgId').placeholder = g ? '例如 999002' : '例如 20002';
+}
+$('dlgKind').onchange = syncDialogLabels;
+$('newConvBtn').onclick = () => {
+  $('dlgId').value = ''; $('dlgName').value = ''; $('dlgErr').textContent = '';
+  syncDialogLabels();
+  $('convDialog').showModal();
+  $('dlgId').focus();
+};
+$('dlgCancel').onclick = () => $('convDialog').close();
+$('dlgOk').onclick = async () => {
+  const id = $('dlgId').value.trim();
+  if (!/^\d{1,12}$/.test(id)) { $('dlgErr').textContent = '号码要是数字'; return; }
+  try {
+    const r = await api('conversations', { key: `${$('dlgKind').value}:${id}`, name: $('dlgName').value.trim() || undefined });
+    $('convDialog').close();
+    await loadConversations();
+    select(r.conversation.key);
+  } catch (error) { $('dlgErr').textContent = error.message; }
+};
+
+// ── 调试开关 ───────────────────────────────────────────────────────────────
+$('onlineBox').onchange = () => api('status', { online: $('onlineBox').checked }).catch((e) => toast(e.message));
+$('goodBox').onchange = () => api('status', { good: $('goodBox').checked }).catch((e) => toast(e.message));
+$('dropBtn').onclick = async () => {
+  try { const r = await api('drop', {}); toast(`已断开 ${r.dropped} 个连接，桥接应在几秒内自动重连`); }
+  catch (error) { toast(error.message); }
+};
+
+function renderStatus() {
+  const s = state.status;
+  const on = s.wsClients > 0;
+  $('bridgeDot').classList.toggle('on', on);
+  $('bridgeText').textContent = on ? `桥接已连接 · 机器人 ${s.nickname}（${s.selfId}）` : '桥接未连接：用 chain.mjs exec 启动桥接';
+  $('onlineBox').checked = s.online;
+  $('goodBox').checked = s.good;
+}
+
+// ── 实时推送 ───────────────────────────────────────────────────────────────
+function onMessage(m) {
+  const list = state.messages.get(m.key);
+  if (list && !list.some((x) => x.message_id === m.message_id)) list.push(m);
+  const c = conv(m.key);
+  if (!c) { loadConversations().catch(() => {}); return; }
+  c.last = { time: m.time, text: m.text, self: m.self, sender: m.self ? state.status.nickname : (m.sender.card || m.sender.nickname) };
+  if (!m.self && c.kind === 'group' && !c.members.some((x) => x.user_id === m.sender.user_id)) {
+    c.members.push({ user_id: m.sender.user_id, nickname: m.sender.nickname, card: m.sender.card || '' });
+  }
+  if (m.self) state.waiting.delete(m.key);
+  state.conversations.sort((a, b) => (b.last?.time ?? 0) - (a.last?.time ?? 0));
+  if (m.key === state.current) { if (list) appendMessage(m); renderWaiting(); }
+  else if (m.self) state.unread.set(m.key, (state.unread.get(m.key) || 0) + 1);
+  renderConversations();
+}
+function onPoke(p) {
+  const text = `${nameOf(p.from, p.key)} 拍了拍 ${nameOf(p.to, p.key)}`;
+  const entry = { poke: text, key: p.key, message_id: -Date.now(), time: p.time };
+  const list = state.messages.get(p.key);
+  if (list) list.push(entry);
+  if (p.key === state.current && list) appendMessage(entry);
+}
+function onRecall(r) {
+  const m = findMessage(r.key, r.message_id);
+  if (m) m.recalled = true;
+  const n = $('messages').querySelector(`.msg[data-id="${CSS.escape(String(r.message_id))}"]`);
+  if (n) n.classList.add('recalled');
+}
+
+function connectStream() {
+  const es = new EventSource('/__mock/stream');
+  let opened = false;
+  es.addEventListener('open', async () => {
+    $('banner').classList.remove('show');
+    if (opened) {
+      // 重连后重新拉一遍，补上断线期间的消息
+      state.messages.clear();
+      await loadConversations().catch(() => {});
+      if (state.current) await select(state.current).catch(() => {});
+    }
+    opened = true;
+  });
+  es.addEventListener('error', () => $('banner').classList.add('show'));
+  es.addEventListener('status', (e) => { state.status = JSON.parse(e.data); renderStatus(); });
+  es.addEventListener('message', (e) => onMessage(JSON.parse(e.data).message));
+  es.addEventListener('poke', (e) => onPoke(JSON.parse(e.data)));
+  es.addEventListener('recall', (e) => onRecall(JSON.parse(e.data)));
+  es.addEventListener('conversation', () => loadConversations().catch(() => {}));
+}
+
+(async () => {
+  try {
+    const h = await fetch('/__mock/health').then((r) => r.json());
+    state.status = { ...state.status, ...h, wsClients: h.wsClients };
+    renderStatus();
+    await loadConversations();
+    connectStream();
+    if (state.current) await select(state.current);
+    else renderMessages();
+  } catch (error) {
+    $('banner').textContent = `连不上虚拟网关：${error.message}`;
+    $('banner').classList.add('show');
+  }
+})();
+</script>
+</body>
+</html>

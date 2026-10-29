@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { discoverDshSessionCookie } from '../qq-bridge/src/dsh-client.js';
+import { readOneBotRouteOverride } from '../qq-bridge/src/onebot-route.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let cfg;
@@ -11,6 +12,15 @@ try {
   cfg = JSON.parse(fs.readFileSync(path.join(root, 'qq-bridge/config.json'), 'utf8'));
 } catch {
   console.error('Cannot read qq-bridge/config.json; create a valid private configuration first.');
+  process.exit(1);
+}
+
+// 开发用的 OneBot 路由覆盖（见 qq-bridge/src/onebot-route.js）：本终端设了变量时，网关检查跟着走。
+let route = null;
+try {
+  route = readOneBotRouteOverride(process.env);
+} catch (error) {
+  console.error(`OneBot route override is invalid: ${error.message}`);
   process.exit(1);
 }
 
@@ -45,14 +55,15 @@ async function check(name, action) {
 
 const result = Object.fromEntries(await Promise.all([
   check('gateway', async () => {
-    const base = localBase(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000');
+    const base = localBase(route?.httpUrl || cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000');
+    const token = route ? route.accessToken : (cfg.snowluma?.accessToken || '');
     const r = await read(base + '/get_status', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + (cfg.snowluma?.accessToken || '') },
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
       body: '{}'
     });
     return { ok: r.retcode === 0 && r.data?.online === true && r.data?.good === true,
-      online: r.data?.online, good: r.data?.good };
+      online: r.data?.online, good: r.data?.good, ...(route ? { routeOverride: true } : {}) };
   }),
   check('dsh', async () => {
     const base = localBase(cfg.dsh?.baseUrl || 'http://127.0.0.1:3080');
@@ -76,6 +87,7 @@ const result = Object.fromEntries(await Promise.all([
     return { ok: r.dshReady === true && r.snowluma?.connected === true && r.snowluma?.good === true,
       mode: r.mode, dshReady: r.dshReady, connected: r.snowluma?.connected,
       online: r.snowluma?.accountOnline, good: r.snowluma?.good,
+      ...(r.snowluma?.routeOverride ? { routeOverride: true } : {}),
       privateCount: r.allowPrivate?.length, groupCount: r.allowGroups?.length };
   })
 ]));

@@ -6,7 +6,7 @@
 | --- | --- | --- | --- | --- |
 | ① 离线回归 | 否 | 否 | 否 | 改纯逻辑、每次提交前 |
 | ② 本地全链路（测试小号） | 是 | 是 | 是 | 改桥接调度、会话、发送、人格 |
-| ③ mock 网关 | 否 | 是 | 是（模型） | 没有可用小号时验证全链路（**尚未实现**，见 §4） |
+| ③ 虚拟网关 | 否 | 是 | 是（模型） | 没有可用小号时验证全链路（见 §4） |
 
 > 生产部署见 [deployment.md](deployment.md)。本文不涉及生产机操作。
 
@@ -100,7 +100,7 @@ cp ~/.dsh/.credentials.yaml ~/.dsh-test/ && chmod 600 ~/.dsh-test/.credentials.y
 
 cd qq-bridge
 DSH_HOME=~/.dsh-test node scripts/setup-dsh.mjs     # 装 preset + MCP 到测试 home
-DSH_HOME=~/.dsh-test dsh plugin --profile web install
+DSH_HOME=~/.dsh-test dsh plugin --profile web install   # 需要 pnpm；没有的话见 §4.2 ①
 DSH_HOME=~/.dsh-test dsh web --host 127.0.0.1 --port 3180 --no-open
 ```
 
@@ -112,73 +112,171 @@ DSH_HOME=~/.dsh-test dsh web --host 127.0.0.1 --port 3180 --no-open
 2. **在错误目录跑 `setup-dsh.mjs`** → 配置里的 MCP 路径指向另一份代码；
 3. **整个复制 `~/.dsh`** → 会把原实例的 MCP 路径改写成新目录；只复制 `.credentials.yaml` 就够。
 
-## 4. mock 网关（无 QQ 接入）
+## 4. 虚拟网关（不接 QQ）
 
-> **现状：尚未实现。** 本节是实现规格 + 预期用法；落地后本提示会删除。
+[devkit/mock-onebot](../../devkit/mock-onebot/README.md) 是一个本机运行的虚拟 OneBot 网关，顶替 SnowLuma。它零依赖、不引用桥接的代码，生产环境不会运行它。
 
-### 4.1 为什么值得做
+### 4.1 组成
 
-桥接对 QQ 的全部依赖就是 OneBot v11（一条 WS 收事件 + 一组 HTTP 动作）。用一个本地假服务顶替 SnowLuma，就能在没有第二个 QQ 号的情况下跑通"消息 → 唤醒 → 模型 → 工具发送"。
+| 服务 | 地址 | 数据在哪 | 从哪启动 |
+| --- | --- | --- | --- |
+| 虚拟网关 | HTTP `127.0.0.1:3010`（含聊天界面）/ WS `127.0.0.1:3011` | 内存，重启即清空 | `devkit/mock-onebot` |
+| 测试 DSH | `127.0.0.1:3180` | `~/.dsh-test` | 任意目录，`DSH_HOME=~/.dsh-test` |
+| 测试桥接 | 控制台 `127.0.0.1:3110` | 本仓库 `qq-bridge/state/` | 本仓库 `qq-bridge` |
 
-### 4.2 需要实现的协议面
+三者靠两个环境变量串起来，不用改 `config.json` 里的网关地址：
 
-**WS 事件（必须）**
-
-| 事件 | 关键字段 |
+| 变量 | 作用 |
 | --- | --- |
-| 心跳 | `post_type=meta_event, meta_event_type=heartbeat, status={online:true,good:true}, interval=30000` |
-| 群消息 | `post_type=message, message_type=group, group_id, user_id, message:[{type:'text',data:{text}}], sender:{user_id,nickname,card}` |
-| 私聊消息 | 同上，`message_type=private, sub_type=friend` |
-| 拍一拍 | `post_type=notice, notice_type=notify, sub_type=poke, target_id` |
+| `QQ_BRIDGE_ONEBOT_WS_URL` | 替换 `snowluma.wsUrl` |
+| `QQ_BRIDGE_ONEBOT_HTTP_URL` | 替换 `snowluma.httpUrl` |
 
-**HTTP 动作（桥接实际调用）**
+规则（实现见 `qq-bridge/src/onebot-route.js`）：两个都不设时不生效；必须同时设置且只能指向本机，否则桥接 / MCP 启动失败；生效时不做鉴权，并关闭 token 自愈与 `config.json` 写回。
 
-```
-get_login_info   get_status   get_group_list   get_group_member_list
-send_group_msg   send_private_msg   get_group_msg_history   get_msg
-get_forward_msg  fetch_ptt_text     fetch_custom_face_detail
-group_poke
-```
+`node chain.mjs exec -- <命令>` 会带上这两个变量运行命令。**DSH 和桥接都要用它启动**：MCP 工具是 DSH 拉起的子进程，只给桥接设，收消息走虚拟网关、工具却连真实网关。
 
-未实现的动作统一返回 `{status:'ok',retcode:0,data:[]}`，桥接会优雅降级（表情同步失败、成员列表为空），不影响主链路。
+> **不能直接用日常的 `~/.dsh`。** 它的 MCP 工具指向 `setup-dsh` 当初运行时所在的那份代码（可能是另一个目录），工具会读那份代码的白名单和控制台端口，把消息交给另一个桥接。测试 DSH 必须在**本仓库**的 `qq-bridge` 里跑 `setup-dsh`。
 
-### 4.3 预期形态
+### 4.2 首次准备（只做一次）
 
-```
-scripts/mock-onebot.mjs
-  --http-port 3010 --ws-port 3011 --token mock-token
+**① 测试 DSH 的数据目录**
 
-控制接口（便于脚本化）：
-  POST /__mock/send   {"key":"group:999001","text":"你好"}
-  GET  /__mock/out    返回机器人实际发出的消息（JSONL）
+```bash
+mkdir -p ~/.dsh-test && chmod 700 ~/.dsh-test
+cp ~/.dsh/.credentials.yaml ~/.dsh-test/ && chmod 600 ~/.dsh-test/.credentials.yaml   # 只复制凭据
+
+cd qq-bridge                                         # 必须是本仓库的 qq-bridge
+DSH_HOME=~/.dsh-test node scripts/setup-dsh.mjs      # 装 preset + MCP，路径指向本仓库
 ```
 
-桥接侧配置：
+`setup-dsh` 最后会自动执行 `dsh plugin --profile web install`，这一步需要 `pnpm`。没有 `pnpm` 时，跳过它再手工补两处（`setup-dsh` 已经建好了插件链接，`plugin install` 剩下的就是这两处）：
+
+```bash
+DSH_HOME=~/.dsh-test QQ_BRIDGE_SKIP_DSH_INSTALL=1 node scripts/setup-dsh.mjs
+cp ~/.dsh/profiles/web/cordis.yml ~/.dsh-test/profiles/web/cordis.yml
+node -e "
+const f=require('os').homedir()+'/.dsh-test/profiles/web/package.json', fs=require('fs');
+const j=JSON.parse(fs.readFileSync(f,'utf8'));
+j.dsh.profile.bundles=['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app',...j.dsh.profile.bundles.filter(b=>!b.startsWith('@deepseek-ai/'))];
+fs.writeFileSync(f,JSON.stringify(j,null,2)+'\n');"
+```
+
+漏了这一步的表现：DSH 启动时提示 `mcp-snowluma … pending (waiting for service: tools)`，工具一直不加载。
+
+**② 测试桥接的配置** `qq-bridge/config.json`（已被 git 忽略）：
 
 ```json
-"snowluma": {
-  "wsUrl": "ws://127.0.0.1:3011",
-  "httpUrl": "http://127.0.0.1:3010",
-  "accessToken": "mock-token",
-  "homeDir": "",
-  "followDiscoveredEndpoint": false
+{
+  "consolePort": 3110,
+  "consoleToken": "<随便生成 16 位以上>",
+  "ownerQQ": 20001,
+  "allow": { "private": ["20001"], "groups": ["999001"] },
+  "dsh": { "baseUrl": "http://127.0.0.1:3180", "provider": "deepseek-official", "model": "deepseek-flash", "reasoningEffort": "low" },
+  "snowluma": { "wsUrl": "ws://127.0.0.1:3011", "httpUrl": "http://127.0.0.1:3010", "accessToken": "", "homeDir": "", "followDiscoveredEndpoint": false },
+  "agentPreset": "qq-chat",
+  "slang": { "enabled": false }
 }
 ```
 
-`followDiscoveredEndpoint: false` 必须设置，否则桥接连不上时会去读 SnowLuma 配置自愈并改写 URL。
+- `allow` 里是虚拟网关的默认号码（群 `999001`、用户 `20001`）；在聊天界面新建别的群 / 私聊时，也要加进来再重启桥接；
+- `snowluma` 段也直接写虚拟网关的地址：万一忘了用 `exec` 启动，桥接也只会连虚拟网关，碰不到真实 QQ；
+- `reasoningEffort: low` 省 token，模型调用是真实计费的。
 
-### 4.4 验收标准
+`consoleToken` 可以这样生成：`node -e "console.log(require('crypto').randomBytes(18).toString('base64url'))"`。
 
-1. 桥接日志出现 `SnowLuma 已连接`、`机器人昵称: <mock 返回的昵称>`；
-2. `POST /__mock/send` 后日志出现 `已投递`，并在 `/__mock/out` 看到 `send_group_msg`；
-3. 断开 mock（`Ctrl+C`）后桥接进入重连循环且不崩溃，重启 mock 后自动恢复。
+### 4.3 每次启动
+
+按 **虚拟网关 → DSH → 桥接** 的顺序。下面的命令都在 `devkit/mock-onebot` 里执行，DSH 和桥接各占一个终端。
+
+**① 虚拟网关**（后台运行）
+
+```bash
+cd devkit/mock-onebot
+node chain.mjs up
+```
+
+输出 `虚拟网关已启动（pid …）` 和聊天界面地址。日志在 `devkit/mock-onebot/.run/mock.log`。
+
+**② 测试 DSH**（终端 A，前台）
+
+```bash
+DSH_HOME=~/.dsh-test node chain.mjs exec -- dsh web --host 127.0.0.1 --port 3180 --no-open
+```
+
+确认：
+
+- 输出里有 `[snowluma-safe] ⚠️ OneBot 路由已被环境变量覆盖` 和 `[snowluma-host] ⚠️ …`（说明 MCP 工具拿到了变量）；
+- 最后一行是 `dsh web: http://127.0.0.1:3180/?token=…`。**要在浏览器里看 DSH，必须打开这个带 token 的链接**；直接开 `http://127.0.0.1:3180` 会提示 `authentication required`。token 每次启动都会变。
+- `[qq-tool-restrict] restrict 失败 78/82` 是正常的，日常 DSH 也一样（那些工具本来就不在全局层）。
+
+**③ 测试桥接**（终端 B，前台）
+
+```bash
+DSH_HOME=~/.dsh-test node chain.mjs exec -- node ../../qq-bridge/src/bridge.js
+```
+
+`DSH_HOME` 也要给桥接：它用这个目录里的凭据登录 DSH。确认日志依次出现：
+
+```
+⚠️ OneBot 路由已被环境变量覆盖：WS ws://127.0.0.1:3011，HTTP http://127.0.0.1:3010 …
+SnowLuma 已连接：ws://127.0.0.1:3011
+机器人昵称: 测试机器人
+DSH 已就绪（模式: reserved2）
+```
+
+**④ 检查一遍**
+
+```bash
+node chain.mjs status        # 应显示「WS 客户端 1 个」，即桥接已连上
+```
+
+### 4.4 开始测试
+
+**浏览器**：打开 <http://127.0.0.1:3010>（或 `node chain.mjs ui`）。像聊天软件一样用：切换身份扮演不同群成员、勾「@机器人」、鼠标移到消息上「回复」、选图或直接粘贴图片、拍一拍。左下角可以切换机器人账号的在线 / 收消息状态，或「断开桥接」测重连。
+
+**命令行**：
+
+```bash
+node chain.mjs send group:999001 "你好" --at-self     # 群里有人 @ 机器人
+node chain.mjs send private:20001 "私聊一下"          # 私聊
+node chain.mjs out -f                                # 持续看机器人回了什么
+```
+
+机器人不一定每条都回：二代模式下它自己决定说不说话，@ 它最稳。回复一般要等几秒到几十秒。
+
+### 4.5 停止
+
+```bash
+# 终端 A、B 里 Ctrl+C，停掉 DSH 和桥接
+node chain.mjs down          # 停虚拟网关
+```
+
+之后**不带** `chain.mjs exec` 启动，就回到正常路由。测试数据想清掉：删 `qq-bridge/state/`（本仓库的）和 `~/.dsh-test/sessions/`；彻底不要了就删整个 `~/.dsh-test`。
+
+### 4.6 验收
+
+1. 桥接日志出现 4.3 ③ 里的四行；
+2. 发消息后桥接日志出现 `[reserved2] 唤醒 group:999001`，聊天界面 / `out` 里出现机器人的回复；
+3. 「断开桥接」或 `node chain.mjs drop` 后，桥接几秒内自动重连；
+4. `node chain.mjs calls --unhandled` 为空（有内容说明桥接用到了虚拟网关还没实现的动作）。
+
+### 4.7 常见问题
+
+| 现象 | 原因 |
+| --- | --- |
+| 聊天界面左上角「桥接未连接」 | 桥接没起，或没用 `chain.mjs exec` 启动（连到了别处） |
+| 发了消息机器人一直不回，桥接日志也没有「唤醒」 | 号码不在 `config.json` 的 `allow` 里 |
+| 桥接日志有「唤醒」，但界面里没有回复 | 看 DSH 终端：MCP 工具是否加载（4.2 ① 漏了补两处）；或者模型选择了不说话 |
+| 桥接回复「系统服务重启中，消息已排队」 | DSH 没起，或 `dsh.baseUrl` 不是 `3180` |
+| 浏览器打开 DSH 提示 `authentication required` | 要用 DSH 启动时打印的带 `?token=` 的链接 |
+| DSH 启动后 MCP `pending (waiting for service: tools)` | 4.2 ① 没执行 `plugin install` 也没手工补那两处 |
 
 ## 5. 开发循环建议
 
 | 阶段 | 动作 |
 | --- | --- |
 | 改代码 | 小步改 → `npm run test:audit` → 通过再继续 |
-| 需要看真实行为 | 起测试小号全链路（§2）或 mock（§4） |
+| 需要看真实行为 | 起测试小号全链路（§2）或虚拟网关（§4） |
 | 改 preset / 人格 | `node scripts/build-agent-preset-patches.mjs` → `setup-dsh.mjs` → 重启 DSH；**已有会话不会重建 system prompt**，要用新会话验证 |
 | 改 MCP 工具 | 先重启桥接，再重启 DSH（工具清单握手时枚举） |
 | 提交前 | `python3 scripts/check-publication.py`、`npm run privacy-scan` |

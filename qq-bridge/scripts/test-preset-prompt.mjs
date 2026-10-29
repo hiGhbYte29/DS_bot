@@ -133,21 +133,30 @@ test('删掉安全不变量或正文过短时阻断保存（保护 AI 效果与�
 });
 
 test('写回沿用文件主导行尾，且不吞掉块尾空行', () => {
-  const next = renderPresetPromptYaml(source, originalPrefix);
-  const crlf = (next.match(/\r\n/g) ?? []).length;
-  const lfOnly = (next.match(/\n/g) ?? []).length - crlf;
-  assert.ok(crlf > 0, 'CRLF 文件写回后应仍使用 CRLF');
-  assert.equal(lfOnly, 0, '写回后不应残留/新增 LF-only 行');
-  assert.ok(next.includes('prefix: |-\r\n'), '新增行应使用 CRLF');
-  // 块之后的内容（空行、注释、后续条目）必须逐字保留
-  const before = locatePresetPromptBlock(source);
-  const after = locatePresetPromptBlock(next);
-  assert.deepEqual(
-    next.split('\n').slice(after.blockEnd),
-    source.split('\n').slice(before.blockEnd),
-    'prefix 块之后的内容应逐字不变（含块尾空行与注释）',
-  );
-  assert.ok(source.split('\n').slice(before.blockEnd).some((l) => l.trim() === ''), '样本应确实包含块尾空行，否则该断言无意义');
+  // 显式构造两种行尾，避免测试结果依赖平台和 Git checkout 的换行设置。
+  for (const eol of ['\n', '\r\n']) {
+    const fixture = source.replace(/\r\n/g, '\n').replace(/\n/g, eol);
+    const next = renderPresetPromptYaml(fixture, originalPrefix);
+    const crlf = (next.match(/\r\n/g) ?? []).length;
+    const lfOnly = (next.match(/\n/g) ?? []).length - crlf;
+    if (eol === '\r\n') {
+      assert.ok(crlf > 0, 'CRLF 文件写回后应仍使用 CRLF');
+      assert.equal(lfOnly, 0, '写回后不应残留/新增 LF-only 行');
+    } else {
+      assert.equal(crlf, 0, 'LF 文件写回后不应引入 CRLF');
+      assert.ok(lfOnly > 0, 'LF 文件写回后应仍使用 LF');
+    }
+    assert.ok(next.includes(`prefix: |-${eol}`), '新增行应沿用源文件行尾');
+    // 块之后的内容（空行、注释、后续条目）必须逐字保留
+    const before = locatePresetPromptBlock(fixture);
+    const after = locatePresetPromptBlock(next);
+    assert.deepEqual(
+      next.split('\n').slice(after.blockEnd),
+      fixture.split('\n').slice(before.blockEnd),
+      'prefix 块之后的内容应逐字不变（含块尾空行与注释）',
+    );
+    assert.ok(fixture.split('\n').slice(before.blockEnd).some((l) => l.trim() === ''), '样本应确实包含块尾空行，否则该断言无意义');
+  }
 });
 
 test('只含空格/Tab 的行也能安全往返（不会被当成空行读丢）', () => {

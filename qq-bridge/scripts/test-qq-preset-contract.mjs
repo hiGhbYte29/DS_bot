@@ -71,8 +71,8 @@ test('pre-reply quiet checks, waiting for replies and pre-sleep observation have
 
 test('social autonomy and visual, forwarding, sticker and web capabilities remain described', () => {
   for (const text of [
-    '【反 AI 味：拒绝有求必应】', '【保持主体性】', '【学习群友策略】',
-    '【不要当群管家/主持人】', '普通对话默认 1 条，最多 2 条', '不要用空格断句',
+    '【人格与表达分工】', '【保持主体性】', '【学习群友策略】',
+    '【不要当群管家/主持人】', '不要用空格断句',
     '不会自动发送到 QQ', 'qq_get_message_images', 'qq_get_forward_msg', 'nestedForwardIds',
     'qq_send_poke', 'qq_list_stickers', 'qq_get_sticker_image', 'qq_send_sticker',
     'qq_collect_sticker', 'qq_sticker_note', 'qq_get_self_image',
@@ -81,6 +81,19 @@ test('social autonomy and visual, forwarding, sticker and web capabilities remai
     '语音**默认是关闭的**', '不要假装发了语音',
     'mcp__web-search-safe__web_search', 'mcp__web-search-safe__web_fetch',
   ]) assert.ok(prefix.includes(text), `missing capability or voice rule: ${text}`);
+});
+
+test('both simulation presets leave response length to the role card', () => {
+  for (const name of ['qq-chat', 'qq-chat-v2']) {
+    const rows = yaml.load(fs.readFileSync(
+      new URL(`../dsh/agent-presets/${name}/agent.cordis.yml`, import.meta.url), 'utf8',
+    ));
+    const text = rows.find((row) => row.id === 'persona').config.prefix;
+    assert.match(text, /回复长度、句数及消息条数遵循人格提示词/, name);
+    assert.doesNotMatch(text, /普通对话默认 1 条，最多 2 条|一般 3~5 句|多数 ≤30 字|回复保持简短|但仍要简洁|不要连发 2~3 条/, name);
+  }
+  assert.match(prefix, /一条消息可以包含多个完整句子/);
+  assert.match(prefix, /实际发送须满足接口的单条字数、批次条数和频率上限/);
 });
 
 test('autonomy limits and the observation escape hatch stay described', () => {

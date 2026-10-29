@@ -18,6 +18,7 @@
 //   R14 token 账本：被淘汰采样被新基线覆盖后不得重复计费
 //   R15 /api/send/* 失败路径的 st/now 越界（与 R2 同型，残留在这条旧发送工具真正走的端点）
 //   R16 reserved2 消息落库不得丢 kind/emojiId/summary/subType（表情 CDN 兜底与标签全靠它）
+//   R17 多条发送不再劝模型少说，但分条质量提示和发送硬限制仍生效
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -434,6 +435,54 @@ await test('R16 appendSocialV2Message 保留 kind/emojiId/summary/subType', asyn
     assert.match(String(h.emojiCdnCandidates(stored.media[0].emojiId)[0] ?? ''), /gxh\.vip\.qq\.com/, '落库字段应足以推出 CDN 兜底地址');
   } finally { await h.close(); }
 });
+
+// ── R17. 回复长短由人格决定，发送层仍保留协议与硬限制 ─────────────────────
+for (const endpoint of ['send-message', 'send-burst']) {
+  await test(`R17 ${endpoint} 不因三条消息劝少发，保留质量提示和硬限制`, async () => {
+    const h = await bridgeHarness({ config: { socialV2: { send: {
+      burstMaxMessages: 3,
+      maxMessageChars: 30,
+      maxSendPerMinute: 6,
+      burstIntervalMinMs: 100,
+      burstIntervalMaxMs: 100,
+      longGapProbability: 0
+    } } } });
+    try {
+      h.setMode('reserved2');
+      const token = h.getSocialV2State('group:456').agentToken;
+      await withServer(h, async (port) => {
+        const send = (messages) => call(port, `/api/socialV2/${endpoint}`, {
+          method: 'POST', token, body: { key: 'group:456', messages }
+        });
+        const clean = await send(['第一句。', '第二句。', '第三句。']);
+        assert.equal(clean.status, 200, clean.body);
+        assert.equal(clean.json.sent, 3, '消息数组中的三条应全部发出');
+        assert.equal(clean.json.failed, 0);
+        assert.equal(Object.hasOwn(clean.json, 'hint'), false, '成功响应不得仅因条数劝模型少说');
+        assert.equal(clean.json.warn, undefined, '完整句子不应触发空格提醒');
+        assert.equal(clean.json.splitWarn, undefined, '完整句子不应触发分条提醒');
+
+        const split = await send(['第一 部分，', '继续说明。', '第三句。']);
+        assert.equal(split.status, 200, split.body);
+        assert.equal(split.json.sent, 3, '质量提醒只提醒，不拦截消息');
+        assert.equal(Object.hasOwn(split.json, 'hint'), false);
+        assert.match(split.json.warn, /中文空格/, '空格质量提醒仍返回');
+        assert.match(split.json.splitWarn, /同一句话拆开/, '语义不完整的分条提醒仍返回');
+
+        const tooMany = await send(['一。', '二。', '三。', '四。']);
+        assert.equal(tooMany.status, 400, tooMany.body);
+        assert.match(tooMany.json.error, /最多发送 3 条/);
+        const tooLong = await send(['长'.repeat(31)]);
+        assert.equal(tooLong.status, 400, tooLong.body);
+        assert.match(tooLong.json.error, /单条消息不能超过 30 字/);
+        const rateLimited = await send(['下一句。']);
+        assert.equal(rateLimited.status, 429, rateLimited.body);
+        assert.match(rateLimited.json.error, /发送频率超限/);
+        assert.equal(h.calls.http.filter((c) => String(c.url).endsWith('/send_group_msg')).length, 6, '被硬限制拒绝的消息不得发往网关');
+      });
+    } finally { await h.close(); }
+  });
+}
 
 if (failures) {
   console.error(`\n${failures} 项失败`);
