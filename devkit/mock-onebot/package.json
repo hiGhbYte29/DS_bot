@@ -1,0 +1,14 @@
+{
+  "name": "mock-onebot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "开发用的虚拟 OneBot v11 网关：在本机顶替 SnowLuma，不接真实 QQ。零依赖，与 qq-bridge 只通过 OneBot 协议和两个路由环境变量交互。",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test.mjs"
+  }
+}
